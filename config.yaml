@@ -1,0 +1,130 @@
+# 文章发布流水线配置
+
+# ── 内容采集 ─────────────────────────────────────────────
+collector:
+  # 每次采集最多抓多少篇
+  max_articles: 20
+  # 只保留 N 小时内的文章
+  max_age_hours: 24
+
+  sources:
+    reddit:
+      enabled: true
+      subreddits:
+        - artificial
+        - MachineLearning
+        - LocalLLaMA
+        - ChatGPT
+        - singularity
+        - OpenAI
+      sort: hot  # hot | new | top
+      limit: 10
+
+    hackernews:
+      enabled: true
+      # 只抓 top stories 中 AI 相关的
+      limit: 30
+      keywords:
+        - AI
+        - LLM
+        - GPT
+        - Claude
+        - agent
+        - machine learning
+        - neural network
+        - transformer
+        - openai
+        - anthropic
+        - google deepmind
+        - meta AI
+        - mistral
+        - stable diffusion
+        - diffusion
+        - fine-tun*
+        - RAG
+        - embedding
+        - multimodal
+
+    arxiv:
+      enabled: true
+      categories:
+        - cs.AI
+        - cs.CL
+        - cs.LG
+        - cs.CV
+      max_results: 10
+
+    rss:
+      enabled: true
+      feeds:
+        - name: OpenAI Blog
+          url: https://openai.com/blog/rss.xml
+        - name: Google AI Blog
+          url: https://blog.google/technology/ai/rss/
+        - name: The Verge AI
+          url: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
+        - name: TechCrunch AI
+          url: https://techcrunch.com/category/artificial-intelligence/feed/
+
+# ── 内容处理 ─────────────────────────────────────────────
+processor:
+  # 翻译 & 改写风格
+  style:
+    language: zh-CN
+    tone: 科技资讯风格，专业但不枯燥，适当加入点评
+    target_audience: 关注AI前沿的科技爱好者
+    min_length: 800   # 最少字数
+    max_length: 2000  # 最多字数
+
+  # 去AI味
+  humanize: true
+
+  # 自动生成标签
+  auto_tags: true
+  max_tags: 5
+
+# ── 发布平台 ─────────────────────────────────────────────
+publisher:
+  # 发布间隔（秒），避免太快被封
+  cooldown_seconds: 300
+
+  wechat:
+    enabled: true
+    # 公众号配置
+    app_id: "wxd05598e68dd59b8e"
+    app_secret: "5dfb61acabfbe294c684d7eb4edcabda"
+    # 或者使用 web cookie 方式
+    cookie_file: "wechat_cookies.txt"
+    # 封面图
+    cover_auto: true
+
+  toutiao:
+    enabled: true
+    # 头条号配置
+    cookie_file: "toutiao_cookies.txt"
+    # 发布默认分类
+    default_category: 科技
+
+# ── 定时任务 ─────────────────────────────────────────────
+scheduler:
+  # 发布时间表（cron 格式）
+  publish_times:
+    - "0 9 * * *"   # 每天 9:00
+    - "0 18 * * *"  # 每天 18:00
+
+  # 采集间隔
+  collect_interval_hours: 6
+
+# ── LLM ──────────────────────────────────────────────────
+llm:
+  backend: openai
+  openai:
+    api_key: ""  # 从环境变量 XIAOMI_API_KEY 读取
+    base_url: https://token-plan-cn.xiaomimimo.com/v1
+    model: mimo-v2-pro
+
+# ── 输出 ─────────────────────────────────────────────────
+output:
+  articles_dir: output/articles
+  images_dir: output/images
+  runs_dir: runs
