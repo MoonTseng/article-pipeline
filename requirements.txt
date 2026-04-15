@@ -1,0 +1,4 @@
+httpx
+pyyaml
+openai
+feedparser

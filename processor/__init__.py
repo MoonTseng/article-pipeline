@@ -84,10 +84,33 @@ REWRITE_PROMPT = """你是一位资深科技媒体编辑，擅长把英文科技
 
 ## 风格要求
 - 像 36氪 / 量子位 的风格：专业但不枯燥
-- 不要用"在当今"、"随着...的发展"、"众所周知"等AI味表达
 - 适当加入口语化表达和网络用语
 - 可以有自己的观点和吐槽
 - 技术术语保留英文原文 + 中文解释
+
+## 去AI味规则（严格遵守）
+### 禁用开头词/句式（直接删掉，换成有信息量的开头）
+"在当今", "随着...的发展", "众所周知", "不可否认", "值得注意的是", "事实上", "毫无疑问",
+"近年来", "伴随着", "不难发现"
+
+### 禁用连接词堆砌
+"此外", "与此同时", "不仅如此", "综上所述", "总而言之", "进而", "由此可见"
+
+### 禁用假大空表达
+"具有重要意义", "发挥着关键作用", "引发了广泛关注", "开启了新篇章",
+"为...提供了新思路", "展现了...的决心", "标志着...的到来"
+
+### 禁用AI高频英文词（如果出现请替换）
+pivotal→关键的, landmark→里程碑式的, delve→研究, foster→推动,
+underscore→说明, multifaceted→多方面的, nuanced→细致的,
+"stands as"→"就是", "serves as"→"就是"
+
+### 必须做到
+- 句子长短交替（不要每段4句话齐整整的）
+- 有态度有观点，不要四平八稳
+- 敢用反问、吐槽、类比
+- 数字、对比、具体细节 > 空洞形容词
+- 开头直接说事，不要铺垫
 
 ## 输出格式（严格JSON）
 ```json
@@ -102,8 +125,30 @@ REWRITE_PROMPT = """你是一位资深科技媒体编辑，擅长把英文科技
 只输出JSON，不要其他内容。"""
 
 
+HUMANIZE_PROMPT = """你是一个去AI味审查员。检查下面这篇中文科技文章，找出所有AI写作痕迹并修正。
+
+## 审查清单
+1. 开头是否用了"在当今"、"随着"、"众所周知"等套话？→ 换成直接说事
+2. 是否有"此外"、"与此同时"、"综上所述"等连接词堆砌？→ 删掉或换成口语
+3. 是否有"具有重要意义"、"引发广泛关注"等假大空？→ 用具体数据或事实替代
+4. 段落长度是否太均匀（每段都是3-4句）？→ 打乱节奏
+5. 是否缺少作者态度/观点？→ 加入点评、吐槽或类比
+6. 句式是否太整齐？→ 长短句交替
+
+## 待审查文章
+标题: {title}
+正文:
+{body}
+
+## 要求
+- 直接输出修改后的完整文章
+- 只改AI味问题，不要改变事实内容
+- 输出纯JSON格式：{{"title": "...", "body": "..."}}
+- 只输出JSON，不要其他内容"""
+
+
 def process_article(article: dict, config: dict) -> dict:
-    """用 LLM 改写单篇文章"""
+    """用 LLM 改写单篇文章（含去AI味二次审查）"""
     prompt = REWRITE_PROMPT.format(
         title=article["title"],
         source=article["source_name"],
@@ -121,6 +166,27 @@ def process_article(article: dict, config: dict) -> dict:
             json_str = re.sub(r'\s*```$', '', json_str)
 
         parsed = json.loads(json_str)
+
+        # ── 第二步：去AI味审查 ──────────────────────────
+        humanize_enabled = config.get("processor", {}).get("humanize", True)
+        if humanize_enabled and parsed.get("body"):
+            try:
+                h_prompt = HUMANIZE_PROMPT.format(
+                    title=parsed.get("title", ""),
+                    body=parsed.get("body", ""),
+                )
+                h_result = _call_llm(h_prompt, config, max_tokens=4000)
+                h_json = h_result.strip()
+                if h_json.startswith("```"):
+                    h_json = re.sub(r'^```(?:json)?\s*', '', h_json)
+                    h_json = re.sub(r'\s*```$', '', h_json)
+                h_parsed = json.loads(h_json)
+                if h_parsed.get("body"):
+                    parsed["title"] = h_parsed.get("title", parsed["title"])
+                    parsed["body"] = h_parsed["body"]
+                    logger.info("   🧹 去AI味审查完成")
+            except Exception as e:
+                logger.warning(f"   ⚠️ 去AI味审查失败(跳过): {e}")
 
         return {
             "original_title": article["title"],

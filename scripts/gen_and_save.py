@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate and save WeChat article using Xiaomi LLM"""
 import sys, json, os, re
-sys.path.insert(0, '/Users/raytseng/hermes/article-pipeline')
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from processor import _call_llm
 from collector import _load_config
 
@@ -56,7 +56,7 @@ strong {{ color: #07c160; }}
 <div class="footer">极话 · AI 科技日报<br>来源: The Information, Reddit r/singularity<br>2026-04-15</div>
 </body></html>"""
 
-out = "/Users/raytseng/hermes/article-pipeline/output/articles/wechat_claude_opus_47.html"
+out = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output", "articles", "wechat_claude_opus_47.html")
 with open(out, "w", encoding="utf-8") as f:
     f.write(html)
 

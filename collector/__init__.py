@@ -13,6 +13,20 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+# ── 代理 ─────────────────────────────────────────────────
+
+def _get_proxy(config: dict) -> str | None:
+    """从配置或环境变量获取代理"""
+    proxy = config.get("collector", {}).get("proxy")
+    if proxy:
+        return proxy
+    # 从环境变量自动检测
+    for env in ("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"):
+        val = os.environ.get(env)
+        if val:
+            return val
+    return None
+
 # ── 通用 ─────────────────────────────────────────────────
 
 def _load_config(config_path: str = None) -> dict:
@@ -55,11 +69,12 @@ def collect_reddit(config: dict) -> list[dict]:
     cutoff = time.time() - max_age
 
     headers = {"User-Agent": "ArticlePipeline/1.0 (research bot)"}
+    proxy = _get_proxy(config)
 
     for sub in subreddits:
         try:
             url = f"https://www.reddit.com/r/{sub}/{sort}.json?limit={limit}&t=day"
-            resp = httpx.get(url, headers=headers, timeout=15)
+            resp = httpx.get(url, headers=headers, timeout=15, proxy=proxy)
             resp.raise_for_status()
             data = resp.json()
 
@@ -117,13 +132,14 @@ def collect_hackernews(config: dict) -> list[dict]:
     articles = []
 
     try:
+        proxy = _get_proxy(config)
         # 获取 top stories
-        resp = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json", timeout=10)
+        resp = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json", timeout=10, proxy=proxy)
         story_ids = resp.json()[:limit]
 
         for sid in story_ids:
             try:
-                item = httpx.get(f"https://hacker-news.firebaseio.com/v0/item/{sid}.json", timeout=10).json()
+                item = httpx.get(f"https://hacker-news.firebaseio.com/v0/item/{sid}.json", timeout=10, proxy=proxy).json()
                 if not item:
                     continue
 
@@ -174,6 +190,7 @@ def collect_arxiv(config: dict) -> list[dict]:
     articles = []
 
     try:
+        proxy = _get_proxy(config)
         cat_query = "+OR+".join(f"cat:{c}" for c in categories)
         url = (
             f"https://export.arxiv.org/api/query?"
@@ -181,7 +198,7 @@ def collect_arxiv(config: dict) -> list[dict]:
             f"&sortBy=submittedDate&sortOrder=descending"
             f"&max_results={max_results}"
         )
-        resp = httpx.get(url, timeout=30, follow_redirects=True)
+        resp = httpx.get(url, timeout=30, follow_redirects=True, proxy=proxy)
         resp.raise_for_status()
 
         # 简单 XML 解析（不引入额外依赖）
