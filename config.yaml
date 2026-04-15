@@ -119,15 +119,25 @@ scheduler:
 
 # ── LLM ──────────────────────────────────────────────────
 llm:
-  backend: bedrock_proxy
-  bedrock_proxy:
-    base_url: http://deepseek-work.intsig.net/proxy/aws/claude/bedrock
-    auth_token: "019cb8392e8b7c51953cea1ccfa305d5"
-    model: claude-sonnet-4-20250514
+  # 主要后端（文章翻译/改写 — 需要高质量）
+  backend: openai
   openai:
     api_key: ""  # 从环境变量 XIAOMI_API_KEY 读取
     base_url: https://token-plan-cn.xiaomimimo.com/v1
     model: mimo-v2-pro
+
+  # 本地后端（摘要/标签/简单任务 — 省token）
+  local:
+    backend: ollama
+    ollama:
+      base_url: http://127.0.0.1:11434
+      model: qwen2.5:7b
+    # 哪些任务用本地模型
+    use_for:
+      - summarize      # 文章摘要
+      - tags           # 生成标签
+      - categorize      # 分类判断
+      - filter         # 相关性过滤
 
 # ── 输出 ─────────────────────────────────────────────────
 output:

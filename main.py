@@ -28,7 +28,7 @@ BASE_DIR = os.path.dirname(__file__)
 sys.path.insert(0, BASE_DIR)
 
 from collector import collect_all
-from processor import process_all, save_articles
+from processor import process_all, save_articles, filter_articles_local
 from publisher import publish_articles, generate_report
 
 # ── 日志 ──────────────────────────────────────────────────
@@ -76,6 +76,9 @@ def cmd_process(config: dict, articles: list[dict] = None):
         with open(latest, encoding="utf-8") as f:
             articles = json.load(f)
         logger.info(f"📂 从 {files[-1]} 加载 {len(articles)} 篇文章")
+
+    # 本地模型预过滤（省token）
+    articles = filter_articles_local(articles, config)
 
     processed = process_all(articles, config)
     save_articles(processed)

@@ -19,11 +19,41 @@ def _load_config(config_path: str = None) -> dict:
         return yaml.safe_load(f)
 
 
-def _call_llm(prompt: str, config: dict, max_tokens: int = 4000) -> str:
-    """调用 LLM（支持 bedrock proxy 和 openai）"""
+def _call_llm(prompt: str, config: dict, max_tokens: int = 4000, task: str = "default") -> str:
+    """调用 LLM（支持 ollama 本地 + openai 小米API）
+    
+    task 参数用于决定用哪个后端:
+      - summarize / tags / categorize / filter → 本地 ollama（省token）
+      - rewrite / default → 小米API（高质量）
+    """
     llm_cfg = config.get("llm", {})
-    backend = llm_cfg.get("backend", "bedrock_proxy")
-
+    
+    # 检查是否该任务走本地模型
+    local_cfg = llm_cfg.get("local", {})
+    use_for = local_cfg.get("use_for", [])
+    use_local = task in use_for
+    
+    if use_local and local_cfg:
+        # 本地 Ollama
+        ollama_cfg = local_cfg.get("ollama", {})
+        base_url = ollama_cfg.get("base_url", "http://127.0.0.1:11434")
+        model = ollama_cfg.get("model", "qwen2.5:7b")
+        
+        resp = httpx.post(
+            f"{base_url}/api/chat",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": False,
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json()["message"]["content"]
+    
+    # 默认走小米API
+    backend = llm_cfg.get("backend", "openai")
+    
     if backend == "bedrock_proxy":
         bp = llm_cfg.get("bedrock_proxy", {})
         url = f"{bp['base_url']}/model/{bp['model']}/invoke"
@@ -157,7 +187,7 @@ def process_article(article: dict, config: dict) -> dict:
     )
 
     try:
-        result = _call_llm(prompt, config, max_tokens=4000)
+        result = _call_llm(prompt, config, max_tokens=4000, task="rewrite")
 
         # 解析 JSON（处理 markdown code block）
         json_str = result.strip()
@@ -237,6 +267,47 @@ def process_all(articles: list[dict], config: dict) -> list[dict]:
 
     logger.info(f"✅ 处理完成: {len(processed)}/{len(articles)} 篇")
     return processed
+
+
+# ── 本地模型：文章过滤 ───────────────────────────────────
+
+FILTER_PROMPT = """判断以下AI科技文章是否值得改写发布到中文科技公众号。
+
+文章标题: {title}
+来源: {source}
+摘要: {summary}
+
+判断标准:
+- ✅ 值得: 有实质技术内容、新产品发布、行业重大变化、有讨论价值
+- ❌ 跳过: 纯广告、水文、过于专业冷门、与AI/科技无关
+
+只回答 "YES" 或 "NO"，不要解释。"""
+
+
+def filter_articles_local(articles: list[dict], config: dict) -> list[dict]:
+    """用本地模型预过滤文章，筛掉不值得改写的，节省API token"""
+    logger.info(f"🔍 本地模型过滤 {len(articles)} 篇文章...")
+    
+    filtered = []
+    for i, article in enumerate(articles, 1):
+        prompt = FILTER_PROMPT.format(
+            title=article["title"],
+            source=article.get("source_name", ""),
+            summary=article.get("summary", "")[:300],
+        )
+        try:
+            result = _call_llm(prompt, config, max_tokens=10, task="filter")
+            if result and result.strip().upper().startswith("YES"):
+                filtered.append(article)
+                logger.info(f"   [{i}] ✅ {article['title'][:50]}")
+            else:
+                logger.info(f"   [{i}] ⏭️  跳过: {article['title'][:50]}")
+        except Exception as e:
+            logger.warning(f"   [{i}] ⚠️ 过滤失败，保留: {e}")
+            filtered.append(article)  # 失败就保留
+    
+    logger.info(f"🔍 过滤后: {len(filtered)}/{len(articles)} 篇保留")
+    return filtered
 
 
 # ── 保存 ──────────────────────────────────────────────────
