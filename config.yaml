@@ -126,6 +126,14 @@ llm:
     base_url: https://token-plan-cn.xiaomimimo.com/v1
     model: mimo-v2-pro
 
+  # 备用后端（小米用完切 DeepSeek）
+  fallback:
+    backend: openai
+    openai:
+      api_key: "sk-9c0783a6823c4227927f1416becd8df1"
+      base_url: https://api.deepseek.com/v1
+      model: deepseek-chat
+
   # 本地后端（摘要/标签/简单任务 — 省token）
   local:
     backend: ollama

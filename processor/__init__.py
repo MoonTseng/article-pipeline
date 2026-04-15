@@ -20,11 +20,11 @@ def _load_config(config_path: str = None) -> dict:
 
 
 def _call_llm(prompt: str, config: dict, max_tokens: int = 4000, task: str = "default") -> str:
-    """调用 LLM（支持 ollama 本地 + openai 小米API）
+    """调用 LLM（支持 ollama 本地 + openai 小米/DeepSeek，自动降级）
     
     task 参数用于决定用哪个后端:
       - summarize / tags / categorize / filter → 本地 ollama（省token）
-      - rewrite / default → 小米API（高质量）
+      - rewrite / default → 小米API（高质量），失败自动切 DeepSeek
     """
     llm_cfg = config.get("llm", {})
     
@@ -51,45 +51,52 @@ def _call_llm(prompt: str, config: dict, max_tokens: int = 4000, task: str = "de
         resp.raise_for_status()
         return resp.json()["message"]["content"]
     
-    # 默认走小米API
-    backend = llm_cfg.get("backend", "openai")
+    # 构建后端列表：主后端 + 备用后端
+    backends = []
+    primary = llm_cfg.get("backend", "openai")
+    backends.append(("主后端", llm_cfg.get(primary, {}), primary) if primary == "openai" 
+                    else ("主后端", llm_cfg.get(primary, {}), primary))
     
-    if backend == "bedrock_proxy":
-        bp = llm_cfg.get("bedrock_proxy", {})
-        url = f"{bp['base_url']}/model/{bp['model']}/invoke"
-        headers = {}
-        if bp.get("auth_token"):
-            headers["Authorization"] = f"Bearer {bp['auth_token']}"
-
-        resp = httpx.post(
-            url,
-            headers=headers,
-            json={
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": max_tokens,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("content", [{}])[0].get("text", "")
-
-    elif backend == "openai":
-        from openai import OpenAI
-        oa = llm_cfg.get("openai", {})
-        api_key = oa.get("api_key") or os.getenv("XIAOMI_API_KEY", "")
-        base_url = oa.get("base_url") or os.getenv("XIAOMI_BASE_URL", "")
-        client = OpenAI(api_key=api_key, base_url=base_url)
-        resp = client.chat.completions.create(
-            model=oa.get("model", "mimo-v2-pro"),
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=max_tokens,
-        )
-        return resp.choices[0].message.content
-
-    else:
-        raise ValueError(f"不支持的 LLM backend: {backend}")
+    fallback = llm_cfg.get("fallback", {})
+    if fallback:
+        fb_backend = fallback.get("backend", "openai")
+        backends.append(("备用(DeepSeek)", fallback.get(fb_backend, {}), fb_backend))
+    
+    last_error = None
+    for name, bk_cfg, bk_type in backends:
+        try:
+            if bk_type == "bedrock_proxy":
+                url = f"{bk_cfg['base_url']}/model/{bk_cfg['model']}/invoke"
+                headers = {}
+                if bk_cfg.get("auth_token"):
+                    headers["Authorization"] = f"Bearer {bk_cfg['auth_token']}"
+                resp = httpx.post(url, headers=headers, json={
+                    "anthropic_version": "bedrock-2023-05-31",
+                    "max_tokens": max_tokens,
+                    "messages": [{"role": "user", "content": prompt}],
+                }, timeout=60)
+                resp.raise_for_status()
+                return resp.json().get("content", [{}])[0].get("text", "")
+            
+            elif bk_type == "openai":
+                from openai import OpenAI
+                api_key = bk_cfg.get("api_key") or os.getenv("XIAOMI_API_KEY", "")
+                base_url = bk_cfg.get("base_url", "")
+                model = bk_cfg.get("model", "mimo-v2-pro")
+                client = OpenAI(api_key=api_key, base_url=base_url)
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=max_tokens,
+                )
+                return resp.choices[0].message.content
+            
+        except Exception as e:
+            logger.warning(f"⚠️ {name} 调用失败: {e}，尝试下一个后端...")
+            last_error = e
+            continue
+    
+    raise RuntimeError(f"所有LLM后端均失败: {last_error}")
 
 
 # ── 文章改写 ──────────────────────────────────────────────
