@@ -176,17 +176,18 @@ underscore→说明, multifaceted→多方面的, nuanced→细致的,
 - 数字、对比、具体细节 > 空洞形容词
 - 开头直接说事，不要铺垫
 
-## 输出格式（严格JSON）
-```json
-{{
-  "title": "文章标题",
-  "summary": "一句话摘要（50字以内）",
-  "body": "正文内容（支持markdown格式）",
-  "tags": ["标签1", "标签2", "标签3"]
-}}
-```
+## 输出格式（严格按照以下分隔符格式）
 
-只输出JSON，不要其他内容。"""
+===TITLE===
+文章标题
+===SUMMARY===
+一句话摘要（50字以内）
+===TAGS===
+标签1, 标签2, 标签3
+===BODY===
+正文内容（支持markdown格式，直接写正文，不要包裹在JSON或代码块里）
+
+严格按照上面的分隔符格式输出，不要用JSON，不要用代码块包裹。"""
 
 
 HUMANIZE_PROMPT = """你是一个去AI味审查员。检查下面这篇中文科技文章，找出所有AI写作痕迹并修正。
@@ -207,8 +208,32 @@ HUMANIZE_PROMPT = """你是一个去AI味审查员。检查下面这篇中文科
 ## 要求
 - 直接输出修改后的完整文章
 - 只改AI味问题，不要改变事实内容
-- 输出纯JSON格式：{{"title": "...", "body": "..."}}
-- 只输出JSON，不要其他内容"""
+- 按以下分隔符格式输出：
+
+===TITLE===
+修改后的标题
+===BODY===
+修改后的正文
+
+严格按分隔符格式，不要用JSON。"""
+
+
+def _parse_delimited_output(text: str) -> dict:
+    """解析分隔符格式的 LLM 输出"""
+    result = {}
+    # 支持的分隔符
+    sections = re.split(r'===(\w+)===', text)
+    # sections: ['前导文字', 'TITLE', '标题内容', 'SUMMARY', '摘要内容', ...]
+    for i in range(1, len(sections) - 1, 2):
+        key = sections[i].strip().lower()
+        value = sections[i + 1].strip()
+        result[key] = value
+
+    if 'tags' in result:
+        # "标签1, 标签2, 标签3" -> ["标签1", "标签2", "标签3"]
+        result['tags'] = [t.strip() for t in result['tags'].split(',') if t.strip()]
+
+    return result
 
 
 def process_article(article: dict, config: dict) -> dict:
@@ -223,13 +248,11 @@ def process_article(article: dict, config: dict) -> dict:
     try:
         result = _call_llm(prompt, config, max_tokens=4000, task="rewrite")
 
-        # 解析 JSON（处理 markdown code block）
-        json_str = result.strip()
-        if json_str.startswith("```"):
-            json_str = re.sub(r'^```(?:json)?\s*', '', json_str)
-            json_str = re.sub(r'\s*```$', '', json_str)
+        # 解析分隔符格式
+        parsed = _parse_delimited_output(result)
 
-        parsed = json.loads(json_str)
+        if not parsed.get("body"):
+            raise ValueError("未找到 ===BODY=== 分隔符，输出格式异常")
 
         # ── 第二步：去AI味审查 ──────────────────────────
         humanize_enabled = config.get("processor", {}).get("humanize", True)
@@ -240,13 +263,9 @@ def process_article(article: dict, config: dict) -> dict:
                     body=parsed.get("body", ""),
                 )
                 h_result = _call_llm(h_prompt, config, max_tokens=4000)
-                h_json = h_result.strip()
-                if h_json.startswith("```"):
-                    h_json = re.sub(r'^```(?:json)?\s*', '', h_json)
-                    h_json = re.sub(r'\s*```$', '', h_json)
-                h_parsed = json.loads(h_json)
+                h_parsed = _parse_delimited_output(h_result)
                 if h_parsed.get("body"):
-                    parsed["title"] = h_parsed.get("title", parsed["title"])
+                    parsed["title"] = h_parsed.get("title", parsed.get("title", ""))
                     parsed["body"] = h_parsed["body"]
                     logger.info("   🧹 去AI味审查完成")
             except Exception as e:
@@ -265,8 +284,8 @@ def process_article(article: dict, config: dict) -> dict:
             "status": "processed",
         }
 
-    except json.JSONDecodeError as e:
-        logger.warning(f"   ⚠️ JSON 解析失败: {e}")
+    except Exception as e:
+        logger.warning(f"   ⚠️ LLM 改写失败: {e}")
         # fallback：直接用原文信息
         return {
             "original_title": article["title"],
@@ -280,9 +299,6 @@ def process_article(article: dict, config: dict) -> dict:
             "score": article.get("score", 0),
             "status": "fallback",
         }
-    except Exception as e:
-        logger.warning(f"   ⚠️ LLM 改写失败: {e}")
-        return None
 
 
 def process_all(articles: list[dict], config: dict) -> list[dict]:
