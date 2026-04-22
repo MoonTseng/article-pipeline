@@ -107,16 +107,73 @@ def show_menu(articles: list[dict]):
 
 
 def resolve_image_placeholders(body: str) -> str:
-    """将 ![描述](img:关键词) 替换为 Unsplash 图片链接"""
+    """将 ![描述](img:关键词) 替换为 Pexels 高质量配图（本地缓存）"""
+    img_cache_dir = OUTPUT_DIR / "images"
+    img_cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Pexels API — 免费、高质量、支持中文搜索
+    PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY", "")
+    used_images = set()  # 同一篇文章内去重
+    
+    def fetch_pexels(keyword: str, idx: int) -> str | None:
+        """从 Pexels 搜索并下载配图，返回本地路径"""
+        if not PEXELS_API_KEY:
+            return None
+        
+        # 缓存：同关键词不重复下载
+        safe_kw = re.sub(r'[^a-zA-Z0-9_-]', '_', keyword)[:50]
+        cached = img_cache_dir / f"pexels_{safe_kw}.jpg"
+        if cached.exists() and cached.stat().st_size > 5000:
+            return str(cached)
+        
+        try:
+            import httpx
+            resp = httpx.get(
+                "https://api.pexels.com/v1/search",
+                params={"query": keyword, "per_page": 5, "orientation": "landscape"},
+                headers={"Authorization": PEXELS_API_KEY},
+                timeout=15,
+                proxy=os.environ.get("https_proxy"),
+            )
+            resp.raise_for_status()
+            photos = resp.json().get("photos", [])
+            
+            # 去重：跳过已使用的图
+            for photo in photos:
+                photo_id = photo["id"]
+                if photo_id not in used_images:
+                    img_url = photo["src"]["large"]  # 940px 宽，适合公众号
+                    used_images.add(photo_id)
+                    
+                    # 下载
+                    img_resp = httpx.get(img_url, timeout=20, proxy=os.environ.get("https_proxy"))
+                    if img_resp.status_code == 200 and len(img_resp.content) > 5000:
+                        cached.write_bytes(img_resp.content)
+                        return str(cached)
+            
+        except Exception as e:
+            print(f"  ⚠️ Pexels配图失败({keyword}): {e}")
+        
+        return None
+    
+    img_counter = [0]
+    
     def replace_img(match):
         alt = match.group(1)
         keyword = match.group(2)
-        # Unsplash 免费图片 API，800px 宽度适合公众号
+        img_counter[0] += 1
+        
+        # 1. 尝试 Pexels API
+        local_path = fetch_pexels(keyword, img_counter[0])
+        if local_path:
+            print(f"  📷 配图{img_counter[0]}: {alt} → Pexels({keyword})")
+            return f"![{alt}]({local_path})"
+        
+        # 2. Fallback: Unsplash source（不稳定但免费无需key）
         query = urllib.parse.quote(keyword)
-        url = f"https://images.unsplash.com/photo-{keyword}?w=800"
-        # 用 Unsplash source 随机图（更可靠）
-        url = f"https://source.unsplash.com/800x400/?{query}"
-        return f"![{alt}]({url})"
+        fallback_url = f"https://source.unsplash.com/800x400/?{query}"
+        print(f"  📷 配图{img_counter[0]}: {alt} → Unsplash fallback")
+        return f"![{alt}]({fallback_url})"
 
     return re.sub(r'!\[([^\]]*)\]\(img:([^)]+)\)', replace_img, body)
 

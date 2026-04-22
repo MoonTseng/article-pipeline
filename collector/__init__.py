@@ -1,4 +1,4 @@
-"""AI科技文章采集器 — Reddit / HN / arXiv / RSS"""
+"""AI科技文章采集器 — Reddit / HN / arXiv / RSS + 原文正文抓取"""
 
 import json
 import logging
@@ -12,6 +12,47 @@ import httpx
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+# ── 原文正文抓取 ─────────────────────────────────────────
+def _fetch_full_text(url: str, proxy: str = None, max_chars: int = 5000) -> str:
+    """抓取原文正文（readability 提取）
+    
+    给 LLM 提供真实事实素材，避免凭空捏造。
+    失败时静默返回空字符串，不影响采集流程。
+    """
+    if not url or url.startswith("https://www.reddit.com") or url.startswith("https://news.ycombinator.com"):
+        return ""  # 讨论帖没有正文
+    
+    try:
+        from readability import Document
+        from lxml.html.clean import Cleaner
+        import lxml.html
+        
+        resp = httpx.get(url, timeout=15, proxy=proxy, follow_redirects=True,
+                         headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
+        resp.raise_for_status()
+        
+        # readability 提取正文
+        doc = Document(resp.text)
+        content_html = doc.summary()
+        
+        # HTML → 纯文本
+        tree = lxml.html.fromstring(content_html)
+        text = tree.text_content().strip()
+        
+        # 清理：去掉连续空行、多余空白
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r'[ \t]+', ' ', text)
+        
+        if len(text) < 100:
+            return ""  # 太短说明提取失败
+        
+        return text[:max_chars]
+        
+    except Exception as e:
+        logger.debug(f"   原文抓取失败({url[:60]}): {e}")
+        return ""
 
 # ── 代理 ─────────────────────────────────────────────────
 
@@ -421,6 +462,20 @@ def collect_all(config: dict = None, config_path: str = None) -> list[dict]:
     max_a = config.get("collector", {}).get("max_articles", 20)
     all_articles = rank_articles(all_articles, max_articles=max_a)
 
+    # ── 抓取原文正文（给 LLM 真实素材）────────────────────
+    proxy = _get_proxy(config)
+    enrich_count = 0
+    for i, article in enumerate(all_articles):
+        ext_url = article.get("external_url", "")
+        if ext_url and ext_url != article.get("url", ""):
+            full_text = _fetch_full_text(ext_url, proxy=proxy)
+            if full_text:
+                article["full_text"] = full_text
+                enrich_count += 1
+                logger.info(f"   📄 [{i+1}] 抓到原文 {len(full_text)} 字: {article['title'][:40]}")
+            time.sleep(0.5)  # 礼貌爬虫
+
+    logger.info(f"📄 原文抓取: {enrich_count}/{len(all_articles)} 篇成功")
     logger.info(f"✅ 采集完成，共 {len(all_articles)} 篇待处理")
     return all_articles
 

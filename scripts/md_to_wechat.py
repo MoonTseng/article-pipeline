@@ -8,16 +8,23 @@ def md_to_wechat_html(md_content, title="极话"):
     
     # 先处理图片：微信不支持本地图片，转成 base64 内嵌
     import base64
+    # base_dir for resolving relative image paths
+    _img_base_dir = getattr(md_to_wechat_html, '_base_dir', '.')
     def embed_image(m):
         alt = m.group(1)
-        path = m.group(2)
-        if os.path.exists(path):
-            with open(path, 'rb') as f:
+        img_path = m.group(2)
+        # Resolve relative paths against MD file directory
+        if not os.path.isabs(img_path):
+            img_path = os.path.join(_img_base_dir, img_path)
+        if os.path.exists(img_path):
+            ext = os.path.splitext(img_path)[1].lower()
+            mime = {'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 'gif': 'image/gif', 'webp': 'image/webp'}.get(ext.lstrip('.'), 'image/jpeg')
+            with open(img_path, 'rb') as f:
                 b64 = base64.b64encode(f.read()).decode()
-            return f'![{alt}](data:image/jpeg;base64,{b64})'
+            return f'![{alt}](data:{mime};base64,{b64})'
         return m.group(0)
     
-    md_content = re.sub(r'!\[([^\]]*)\]\((/[^)]+)\)', embed_image, md_content)
+    md_content = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', embed_image, md_content)
     
     # 去掉 HTML 注释
     md_content = re.sub(r'<!--.*?-->', '', md_content, flags=re.DOTALL)
@@ -289,6 +296,7 @@ if __name__ == '__main__':
         with open(md_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
+        md_to_wechat_html._base_dir = os.path.dirname(md_path)
         html = md_to_wechat_html(content, title=fname.replace('.md', ''))
         
         html_name = fname.replace('.md', '.html')
