@@ -34,7 +34,7 @@ def md_to_wechat_html(md_content, title="极话"):
     article_title = title_match.group(1) if title_match else title
     
     # 去掉 h1 标题（公众号标题单独填，正文不需要）
-    md_content = re.sub(r'^#\s+[^\n]+\n+', '', md_content.strip(), count=1)
+    md_content = re.sub(r'^#\s+[^\n]+\n+', '', md_content.strip(), count=1, flags=re.MULTILINE)
     
     # 预处理：手动将 Markdown 表格转为带内联样式的 HTML
     # （markdown 库对表格前无空行的情况解析不稳定，且微信对 table 支持差）
